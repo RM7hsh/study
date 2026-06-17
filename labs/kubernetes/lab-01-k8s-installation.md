@@ -174,13 +174,13 @@ sudo systemctl status containerd
 
 ```bash
 # Добавление Kubernetes репозитория
-sudo tee /etc/yum.repos.d/kubernetes.repo <<EOF
+sudo tee /etc/yum.repos.d/kubernetes.repo <<'EOF'
 [kubernetes]
 name=Kubernetes
-baseurl=https://pkgs.k8s.io/core:/stable:/v1.28/rpm/
+baseurl=https://mirrors.huaweicloud.com/kubernetes/yum/repos/kubernetes-el7-x86_64/
 enabled=1
-gpgcheck=1
-gpgkey=https://pkgs.k8s.io/core:/stable:/v1.28/rpm/repodata/repomd.xml.key
+gpgcheck=0
+repo_gpgcheck=0
 EOF
 
 # Установка
@@ -209,8 +209,8 @@ sudo systemctl status kubelet
 ```bash
 # Инициализация первого master узла
 sudo kubeadm init \
-  --apiserver-advertise-address=10.0.1.10 \
-  --control-plane-endpoint=10.0.1.10:6443 \
+  --apiserver-advertise-address=192.168.77.181 \
+  --control-plane-endpoint=192.168.77.180:6443 \
   --pod-network-cidr=10.244.0.0/16 \
   --service-cidr=10.96.0.0/12 \
   --kubernetes-version=v1.28.0 \
