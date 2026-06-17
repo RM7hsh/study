@@ -174,13 +174,13 @@ sudo systemctl status containerd
 
 ```bash
 # Добавление Kubernetes репозитория
-sudo tee /etc/yum.repos.d/kubernetes.repo <<'EOF'
+sudo tee /etc/yum.repos.d/kubernetes.repo >/dev/null <<'EOF'
 [kubernetes]
-name=Kubernetes
-baseurl=https://mirrors.huaweicloud.com/kubernetes/yum/repos/kubernetes-el7-x86_64/
+name=Kubernetes 1.28
+baseurl=https://pkgs.k8s.io/core:/stable:/v1.28/rpm/
 enabled=1
-gpgcheck=0
-repo_gpgcheck=0
+gpgcheck=1
+gpgkey=https://pkgs.k8s.io/core:/stable:/v1.28/rpm/repodata/repomd.xml.key
 EOF
 
 # Установка
