@@ -176,6 +176,11 @@ sudo systemctl status containerd
 # Добавление Kubernetes репозитория
 wget https://dl.k8s.io/v1.28.0/kubernetes-server-linux-amd64.tar.gz
 
+tar xzf kubernetes-server-linux-amd64.tar.gz
+sudo install kubernetes/server/bin/kubelet /usr/local/bin/
+sudo install kubernetes/server/bin/kubectl /usr/local/bin/
+sudo install kubernetes/server/bin/kubeadm /usr/local/bin/
+
 # Проверка версий
 kubeadm version
 kubectl version --client
