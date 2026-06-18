@@ -174,18 +174,7 @@ sudo systemctl status containerd
 
 ```bash
 # Добавление Kubernetes репозитория
-cat <<EOF | sudo tee /etc/yum.repos.d/kubernetes.repo
-[kubernetes]
-name=Kubernetes
-baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
-enabled=1
-gpgcheck=1
-repo_gpgcheck=1
-gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
-EOF
-
-# Установка
-sudo yum install -y kubelet kubeadm kubectl
+wget https://dl.k8s.io/v1.28.0/kubernetes-server-linux-amd64.tar.gz
 
 # Проверка версий
 kubeadm version
