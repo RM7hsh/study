@@ -19,35 +19,35 @@
    - vCPU: 4 (минимум 2)
    - RAM: 4 GB (минимум 2)
    - Storage: 50 GB
-   - IP: 10.0.1.10
+   - IP: 192.168.77.181
    - Role: Control Plane (Master)
 
 2. k8s-master-02
    - vCPU: 4
    - RAM: 4 GB
    - Storage: 50 GB
-   - IP: 10.0.1.11
+   - IP: 192.168.77.182
    - Role: Control Plane (Backup)
 
 3. k8s-master-03
    - vCPU: 4
    - RAM: 4 GB
    - Storage: 50 GB
-   - IP: 10.0.1.12
+   - IP: 192.168.77.183
    - Role: Control Plane (Backup)
 
 4. k8s-worker-01
    - vCPU: 4
    - RAM: 4 GB
    - Storage: 50 GB
-   - IP: 10.0.1.20
+   - IP: 192.168.77.186
    - Role: Worker
 
 5. k8s-worker-02
    - vCPU: 4
    - RAM: 4 GB
    - Storage: 50 GB
-   - IP: 10.0.1.21
+   - IP: 192.168.77.187
    - Role: Worker
 
 Итого: 3 Master + 2 Worker
@@ -209,8 +209,8 @@ sudo systemctl status kubelet
 ```bash
 # Инициализация первого master узла
 sudo kubeadm init \
-  --apiserver-advertise-address=10.0.1.10 \
-  --control-plane-endpoint=10.0.1.10:6443 \
+  --apiserver-advertise-address=192.168.77.181 \
+  --control-plane-endpoint=192.168.77.181:6443 \
   --pod-network-cidr=10.244.0.0/16 \
   --service-cidr=10.96.0.0/12 \
   --kubernetes-version=v1.28.0 \
