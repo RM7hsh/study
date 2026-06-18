@@ -1,7 +1,6 @@
 # 🧪 Lab 1: Установка Kubernetes 1.28 с kubeadm на Rocky Linux 10 (Offline Friendly)
 
 ## 📋 Обзор
-
 В данной лабораторной работе разворачивается Kubernetes-кластер высокой доступности (HA) из 3 Control Plane и 2 Worker узлов.
 
 Установка Kubernetes выполняется без использования репозиториев Kubernetes и без установки пакетов из внешних источников.
