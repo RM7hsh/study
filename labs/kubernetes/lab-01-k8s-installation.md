@@ -106,10 +106,10 @@ vim \
 curl \
 wget \
 git \
-htop \
 tar \
 bash-completion \
-net-tools
+net-tools \
+procps-ng
 ```
 
 ---
@@ -464,3 +464,91 @@ kubectl get pods -A
 Установка не зависит от репозиториев Kubernetes и может выполняться в полностью изолированной сети без доступа в Интернет.
 
 Следующий этап — установка сетевого плагина Calico или Cilium.
+
+install-k8s.sh
+
+```sh
+#!/bin/bash
+
+set -e
+
+echo "[1/7] Disable swap"
+
+swapoff -a
+sed -i '/ swap / s/^/#/' /etc/fstab
+
+echo "[2/7] Kernel modules"
+
+cat >/etc/modules-load.d/kubernetes.conf <<EOF
+overlay
+br_netfilter
+EOF
+
+modprobe overlay
+modprobe br_netfilter
+
+echo "[3/7] Sysctl"
+
+cat >/etc/sysctl.d/99-kubernetes.conf <<EOF
+net.bridge.bridge-nf-call-iptables=1
+net.bridge.bridge-nf-call-ip6tables=1
+net.ipv4.ip_forward=1
+EOF
+
+sysctl --system
+
+echo "[4/7] Install containerd"
+
+dnf install -y ./files/containerd.io.rpm
+
+mkdir -p /etc/containerd
+
+containerd config default >/etc/containerd/config.toml
+
+sed -i \
+'s/SystemdCgroup = false/SystemdCgroup = true/' \
+/etc/containerd/config.toml
+
+systemctl enable containerd
+systemctl restart containerd
+
+echo "[5/7] Install Kubernetes binaries"
+
+install files/kubeadm /usr/local/bin/
+install files/kubelet /usr/local/bin/
+install files/kubectl /usr/local/bin/
+
+chmod +x /usr/local/bin/kube*
+
+echo "[6/7] Install kubelet service"
+
+cp files/kubelet.service \
+/usr/lib/systemd/system/
+
+mkdir -p \
+/usr/lib/systemd/system/kubelet.service.d
+
+cp files/10-kubeadm.conf \
+/usr/lib/systemd/system/kubelet.service.d/
+
+systemctl daemon-reload
+
+systemctl enable kubelet
+
+echo "[7/7] Import Kubernetes images"
+
+if [ -f files/kubernetes-v1.28.tar ]; then
+    ctr -n k8s.io images import \
+    files/kubernetes-v1.28.tar
+fi
+
+echo
+echo "================================="
+echo "Installation completed"
+echo "================================="
+echo
+echo "Next step:"
+echo
+echo "kubeadm init ..."
+echo
+```
