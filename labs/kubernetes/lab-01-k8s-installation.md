@@ -294,6 +294,7 @@ echo
 ```
 
 ```sh
+cd ~/k8s-lab/
 sudo bash ~/k8s-lab/install-k8s.sh
 mkdir -p $HOME/.kube
 sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
