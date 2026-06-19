@@ -173,31 +173,128 @@ sudo systemctl status containerd
 **Выполнить на ВСЕХ ВМ:**
 
 ```bash
-# Добавление Kubernetes репозитория
-sudo tee /etc/yum.repos.d/kubernetes.repo <<EOF
-[kubernetes]
-name=Kubernetes
-baseurl=https://pkgs.k8s.io/core:/stable:/v1.28/rpm/
-enabled=1
-gpgcheck=1
-gpgkey=https://pkgs.k8s.io/core:/stable:/v1.28/rpm/repodata/repomd.xml.key
+mkdir -p ~/k8s-lab/files
+cd !$
+wget https://download.docker.com/linux/centos/10/x86_64/stable/Packages/containerd.io-1.7.29-1.el10.x86_64.rpm
+mv containerd.io-1.7.29-1.el10.x86_64.rpm containerd.io.rpm
+wget https://dl.k8s.io/v1.28.0/kubernetes-server-linux-amd64.tar.gz
+tar xzf kubernetes-server-linux-amd64.tar.gz
+cp kubernetes/server/bin/{kubeadm,kubelet,kubectl} ~/k8s-lab/files/
+wget https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.28.0/crictl-v1.28.0-linux-amd64.tar.gz
+sudo tar zxvf crictl-v1.28.0-linux-amd64.tar.gz crictl 
+rm -rf crictl-v1.28.0-linux-amd64.tar.gz kubernetes-server-linux-amd64.tar.gz 
+
+cat > kubelet.service <<EOF
+[Unit]
+Description=kubelet: The Kubernetes Node Agent
+Documentation=https://kubernetes.io/docs/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS $KUBELET_KUBEADM_ARGS $KUBELET_EXTRA_ARGS
+Restart=always
+StartLimitInterval=0
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
-# Установка
-sudo yum install -y kubelet kubeadm kubectl
+cat > 10-kubeadm.conf <<EOF
+[Service]
+Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"
+Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"
+# Этот файл создается автоматически командами kubeadm init/join
+EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
+# Файл для ваших кастомных переменных (например, KUBELET_EXTRA_ARGS)
+EnvironmentFile=-/etc/sysconfig/kubelet
+ExecStart=
+ExecStart=/usr/local/bin/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS $KUBELET_KUBEADM_ARGS $KUBELET_EXTRA_ARGS
+EOF
+```
 
-# Проверка версий
-kubeadm version
-kubectl version --client
-kubelet --version
+#### Скрипт установки
 
-# Включение kubelet сервиса
-sudo systemctl enable kubelet
+```sh
+nano ~/k8s-lab/install-k8s.sh
+#!/bin/bash
 
-# Запуск (но не стартует до инициализации)
-sudo systemctl start kubelet
-sudo systemctl status kubelet
-# Статус может быть "activating" - это нормально
+set -e
+
+echo "[1/7] Disable swap and firewall"
+swapoff -a
+sed -i '/ swap / s/^/#/' /etc/fstab
+# Отключаем firewalld, чтобы не блокировал порты k8s
+systemctl stop firewalld || true
+systemctl disable firewalld || true
+
+echo "[2/7] Kernel modules"
+cat >/etc/modules-load.d/kubernetes.conf <<EOF
+overlay
+br_netfilter
+EOF
+
+modprobe overlay
+modprobe br_netfilter
+
+echo "[3/7] Sysctl"
+cat >/etc/sysctl.d/99-kubernetes.conf <<EOF
+net.bridge.bridge-nf-call-iptables=1
+net.bridge.bridge-nf-call-ip6tables=1
+net.ipv4.ip_forward=1
+EOF
+sysctl --system
+
+echo "[4/7] Install containerd"
+dnf install -y ./files/containerd.io.rpm
+mkdir -p /etc/containerd
+containerd config default >/etc/containerd/config.toml
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+systemctl enable containerd
+systemctl restart containerd
+
+echo "[5/7] Install Kubernetes binaries"
+# Устанавливаем k8s утилиты и добавленный crictl
+install files/kubeadm /usr/local/bin/
+install files/kubelet /usr/local/bin/
+install files/kubectl /usr/local/bin/
+if [ -f files/crictl ]; then
+    install files/crictl /usr/local/bin/
+fi
+chmod +x /usr/local/bin/kube* /usr/local/bin/crictl 2>/dev/null || true
+
+# Создаем глобальные симлинки сразу
+ln -sf /usr/local/bin/kubeadm /usr/bin/kubeadm
+ln -sf /usr/local/bin/kubectl /usr/bin/kubectl
+ln -sf /usr/local/bin/kubelet /usr/bin/kubelet
+ln -sf /usr/local/bin/crictl /usr/bin/crictl
+
+echo "[6/7] Install kubelet service"
+cp files/kubelet.service /usr/lib/systemd/system/
+mkdir -p /usr/lib/systemd/system/kubelet.service.d
+cp files/10-kubeadm.conf /usr/lib/systemd/system/kubelet.service.d/
+
+systemctl daemon-reload
+systemctl enable kubelet
+# ВАЖНО: Не запускаем kubelet вручную! kubeadm init сделает это сам.
+
+echo "[7/7] Pulling Kubernetes images"
+# Так как у вас нет kubernetes-v1.28.tar, качаем образы из интернета напрямую через kubeadm
+kubeadm config images pull --kubernetes-version=v1.28.0
+
+echo
+echo "================================="
+echo "Установка успешно завершена!"
+echo "================================="
+echo
+echo "Для запуска кластера выполните команду вручную:"
+echo "sudo kubeadm init --kubernetes-version=v1.28.0 --pod-network-cidr=10.244.0.0/16"
+echo
+```
+
+```sh
+sudo bash ~/k8s-lab/install-k8s.sh
 ```
 
 ---
