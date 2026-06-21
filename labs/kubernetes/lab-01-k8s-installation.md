@@ -1,189 +1,76 @@
 # 🧪 Lab 1: Установка Kubernetes кластера с kubeadm
 
 ## 📋 Обзор
-Эта лабораторная работа учит устанавливать и инициализировать production-like Kubernetes кластер используя kubeadm.
+
+Эта лабораторная работа посвящена развертыванию отказоустойчивого (production-like) кластера Kubernetes версии v1.28.0 с использованием утилиты `kubeadm` в изолированном или локальном окружении.
 
 ## 🎯 Цели
-- Установить все компоненты K8s
-- Инициализировать control plane
-- Добавить worker nodes
-- Проверить работу кластера
+
+* Подготовить операционную систему и среду выполнения контейнеров (containerd).
+* Установить базовые компоненты Kubernetes из бинарных файлов.
+* Инициализировать отказоустойчивый Control Plane.
+* Подключить Worker-ноды к кластеру.
 
 ## 📊 Требуемое окружение
 
-**ВМ которые нужно развернуть:**
-```
-5 Virtual Machines (все с Rocky Linux 10):
+**Спецификация виртуальных машин (Rocky Linux 10):**
 
-1. k8s-master-01
-   - vCPU: 4 (минимум 2)
-   - RAM: 4 GB (минимум 2)
-   - Storage: 50 GB
-   - IP: 192.168.77.181
-   - Role: Control Plane (Master)
+| Имя узла | IP-адрес | vCPU | RAM | Диск | Роль |
+| --- | --- | --- | --- | --- | --- |
+| **k8s-master-01** | 192.168.77.181 | 4 | 4 GB | 50 GB | Control Plane (Инициатор) |
+| **k8s-master-02** | 192.168.77.182 | 4 | 4 GB | 50 GB | Control Plane (Резерв) |
+| **k8s-master-03** | 192.168.77.183 | 4 | 4 GB | 50 GB | Control Plane (Резерв) |
+| **k8s-worker-01** | 192.168.77.186 | 4 | 4 GB | 50 GB | Worker-нода |
+| **k8s-worker-02** | 192.168.77.187 | 4 | 4 GB | 50 GB | Worker-нода |
 
-2. k8s-master-02
-   - vCPU: 4
-   - RAM: 4 GB
-   - Storage: 50 GB
-   - IP: 192.168.77.182
-   - Role: Control Plane (Backup)
+**Обязательные требования ко всем узлам:**
 
-3. k8s-master-03
-   - vCPU: 4
-   - RAM: 4 GB
-   - Storage: 50 GB
-   - IP: 192.168.77.183
-   - Role: Control Plane (Backup)
-
-4. k8s-worker-01
-   - vCPU: 4
-   - RAM: 4 GB
-   - Storage: 50 GB
-   - IP: 192.168.77.186
-   - Role: Worker
-
-5. k8s-worker-02
-   - vCPU: 4
-   - RAM: 4 GB
-   - Storage: 50 GB
-   - IP: 192.168.77.187
-   - Role: Worker
-
-Итого: 3 Master + 2 Worker
-```
-
-**Требования ко всем ВМ:**
-- ✅ Rocky Linux 10 (или совместимый Linux)
-- ✅ Минимум 2 CPU, 2 GB RAM
-- ✅ SSH доступ между всеми узлами
-- ✅ Интернет доступ для загрузки образов
-- ✅ Ports открыты (6443, 2379, 10250, etc.)
-- ✅ Swap отключен
-- ✅ Kernel modules загружены (overlay, br_netfilter)
+* ✅ Отключенный раздел подкачки (Swap).
+* ✅ Настроенная сетевая связанность и открытые порты (6443, 2379-2380, 10250).
+* ✅ Загруженные модули ядра ядра Linux (`overlay`, `br_netfilter`).
 
 ---
 
 ## 📝 Пошаговые инструкции
 
-### Шаг 1: Подготовка всех узлов
+### Шаг 1: Подготовка директорий и загрузка дистрибутивов
 
-**Выполнить на ВСЕХ ВМ (мастерах и воркерах):**
+Чтобы обеспечить независимость от внешних репозиториев (Air-Gapped подход), мы скачаем все необходимые бинарные файлы на первой мастер-ноде, а затем распространим их.
 
-```bash
-# Обновление системы
-sudo yum update -y
-
-# Установка необходимых инструментов
-sudo yum install -y vim curl wget git htop net-tools
-
-# Отключение swap
-sudo swapoff -a
-sudo sed -i '/ swap / s/^/#/' /etc/fstab
-
-# Проверка
-free -h
-# Swap должна быть 0
-```
-
----
-
-### Шаг 2: Загрузка kernel modules
-
-**Выполнить на ВСЕХ ВМ:**
+**Выполнить на `k8s-master-01`:**
 
 ```bash
-# Создание файла конфигурации
-sudo tee /etc/modules-load.d/kubernetes.conf <<EOF
-overlay
-br_netfilter
-EOF
-
-# Загрузка модулей
-sudo modprobe overlay
-sudo modprobe br_netfilter
-
-# Проверка
-lsmod | grep -E 'overlay|br_netfilter'
-
-# Ожидаемый результат:
-# br_netfilter            28672  0
-# overlay                86016  0
-```
-
----
-
-### Шаг 3: Настройка sysctl параметров
-
-**Выполнить на ВСЕХ ВМ:**
-
-```bash
-# Создание конфигурации
-sudo tee /etc/sysctl.d/99-kubernetes.conf <<EOF
-net.bridge.bridge-nf-call-iptables = 1
-net.bridge.bridge-nf-call-ip6tables = 1
-net.ipv4.ip_forward = 1
-EOF
-
-# Применение параметров
-sudo sysctl --system
-
-# Проверка
-sudo sysctl net.ipv4.ip_forward
-# Ожидаемый результат: 1
-```
-
----
-
-### Шаг 4: Установка Container Runtime (containerd)
-
-**Выполнить на ВСЕХ ВМ:**
-
-```bash
-# Добавление репозитория Docker
-sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-
-# Установка containerd
-sudo yum install -y containerd.io
-
-# Создание конфигурации
-sudo mkdir -p /etc/containerd
-sudo containerd config default | sudo tee /etc/containerd/config.toml
-
-# Редактирование конфига для systemd cgroup driver
-sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-
-# Проверка
-sudo grep SystemdCgroup /etc/containerd/config.toml
-# Ожидаемый результат: SystemdCgroup = true
-
-# Запуск containerd
-sudo systemctl restart containerd
-sudo systemctl enable containerd
-
-# Проверка
-sudo systemctl status containerd
-# Ожидаемый результат: active (running)
-```
-
----
-
-### Шаг 5: Установка kubeadm, kubelet, kubectl
-
-**Выполнить на ВСЕХ ВМ:**
-
-```bash
+# Создание рабочей структуры каталогов
 mkdir -p ~/k8s-lab/files
-cd !$
+cd ~/k8s-lab/files
+
+# 1. Загрузка рантайма containerd
 wget https://download.docker.com/linux/centos/10/x86_64/stable/Packages/containerd.io-1.7.29-1.el10.x86_64.rpm
 mv containerd.io-1.7.29-1.el10.x86_64.rpm containerd.io.rpm
+
+# 2. Загрузка серверных бинарников Kubernetes (kubeadm, kubelet, kubectl)
 wget https://dl.k8s.io/v1.28.0/kubernetes-server-linux-amd64.tar.gz
 tar xzf kubernetes-server-linux-amd64.tar.gz
-cp kubernetes/server/bin/{kubeadm,kubelet,kubectl} ~/k8s-lab/files/
-wget https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.28.0/crictl-v1.28.0-linux-amd64.tar.gz
-sudo tar zxvf crictl-v1.28.0-linux-amd64.tar.gz crictl 
-rm -rf crictl-v1.28.0-linux-amd64.tar.gz kubernetes-server-linux-amd64.tar.gz 
+cp kubernetes/server/bin/{kubeadm,kubelet,kubectl} ./
+rm -rf kubernetes kubernetes-server-linux-amd64.tar.gz
 
+# 3. Загрузка утилиты отладки CRI
+wget https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.28.0/crictl-v1.28.0-linux-amd64.tar.gz
+sudo tar zxvf crictl-v1.28.0-linux-amd64.tar.gz crictl
+rm -f crictl-v1.28.0-linux-amd64.tar.gz
+
+```
+
+---
+
+### Шаг 2: Создание конфигурационных файлов служб
+
+Подготовим конфигурацию системных юнитов для `kubelet`, которую наш автоматический скрипт разложит по путям системы.
+
+**Выполнить на `k8s-master-01` в директории `~/k8s-lab/files`:**
+
+```bash
+# Создание базового юнита kubelet
 cat > kubelet.service <<EOF
 [Unit]
 Description=kubelet: The Kubernetes Node Agent
@@ -192,7 +79,7 @@ Wants=network-online.target
 After=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS $KUBELET_KUBEADM_ARGS $KUBELET_EXTRA_ARGS
+ExecStart=/usr/local/bin/kubelet \$KUBELET_KUBECONFIG_ARGS \$KUBELET_CONFIG_ARGS \$KUBELET_KUBEADM_ARGS \$KUBELET_EXTRA_ARGS
 Restart=always
 StartLimitInterval=0
 RestartSec=10
@@ -201,114 +88,104 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
+# Создание конфигурации интеграции с kubeadm
 cat > 10-kubeadm.conf <<EOF
 [Service]
 Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"
 Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"
-# Этот файл создается автоматически командами kubeadm init/join
 EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
-# Файл для ваших кастомных переменных (например, KUBELET_EXTRA_ARGS)
 EnvironmentFile=-/etc/sysconfig/kubelet
 ExecStart=
-ExecStart=/usr/local/bin/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS $KUBELET_KUBEADM_ARGS $KUBELET_EXTRA_ARGS
+ExecStart=/usr/local/bin/kubelet \$KUBELET_KUBECONFIG_ARGS \$KUBELET_CONFIG_ARGS \$KUBELET_KUBEADM_ARGS \$KUBELET_EXTRA_ARGS
 EOF
+
 ```
 
-#### Скрипт установки
+---
 
-```sh
-nano ~/k8s-lab/install-k8s.sh
+### Шаг 3: Написание и запуск скрипта автоматической настройки нод
+
+Этот скрипт полностью берет на себя рутинную настройку ОС (модули ядра, sysctl, отключение Swap, установка рантайма containerd и компонентов K8s).
+
+**Выполнить на `k8s-master-01` (создать файл `~/k8s-lab/install-k8s.sh`):**
+
+```bash
+cat > ~/k8s-lab/install-k8s.sh <<'EOF'
 #!/bin/bash
-
 set -e
 
-echo "[1/7] Disable swap and firewall"
+echo "[1/6] Отключение Swap и Firewalld"
 swapoff -a
 sed -i '/ swap / s/^/#/' /etc/fstab
-# Отключаем firewalld, чтобы не блокировал порты k8s
 systemctl stop firewalld || true
 systemctl disable firewalld || true
 
-echo "[2/7] Kernel modules"
-cat >/etc/modules-load.d/kubernetes.conf <<EOF
+echo "[2/6] Настройка модулей ядра"
+cat > /etc/modules-load.d/kubernetes.conf <<MODULES
 overlay
 br_netfilter
-EOF
-
+MODULES
 modprobe overlay
 modprobe br_netfilter
 
-echo "[3/7] Sysctl"
-cat >/etc/sysctl.d/99-kubernetes.conf <<EOF
-net.bridge.bridge-nf-call-iptables=1
-net.bridge.bridge-nf-call-ip6tables=1
-net.ipv4.ip_forward=1
-EOF
+echo "[3/6] Настройка параметров sysctl (сеть)"
+cat > /etc/sysctl.d/99-kubernetes.conf <<SYSCTL
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward = 1
+SYSCTL
 sysctl --system
 
-echo "[4/7] Install containerd"
+echo "[4/6] Установка и настройка containerd"
 dnf install -y ./files/containerd.io.rpm
 mkdir -p /etc/containerd
-containerd config default >/etc/containerd/config.toml
+containerd config default > /etc/containerd/config.toml
 sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-systemctl enable containerd
-systemctl restart containerd
+systemctl daemon-reload
+systemctl enable --now containerd
 
-echo "[5/7] Install Kubernetes binaries"
-# Устанавливаем k8s утилиты и добавленный crictl
+echo "[5/6] Установка утилит Kubernetes"
 install files/kubeadm /usr/local/bin/
 install files/kubelet /usr/local/bin/
 install files/kubectl /usr/local/bin/
-if [ -f files/crictl ]; then
-    install files/crictl /usr/local/bin/
-fi
-chmod +x /usr/local/bin/kube* /usr/local/bin/crictl 2>/dev/null || true
+if [ -f files/crictl ]; then install files/crictl /usr/local/bin/; fi
 
-# Создаем глобальные симлинки сразу
 ln -sf /usr/local/bin/kubeadm /usr/bin/kubeadm
 ln -sf /usr/local/bin/kubectl /usr/bin/kubectl
 ln -sf /usr/local/bin/kubelet /usr/bin/kubelet
 ln -sf /usr/local/bin/crictl /usr/bin/crictl
 
-echo "[6/7] Install kubelet service"
+echo "[6/6] Настройка службы kubelet"
 cp files/kubelet.service /usr/lib/systemd/system/
 mkdir -p /usr/lib/systemd/system/kubelet.service.d
 cp files/10-kubeadm.conf /usr/lib/systemd/system/kubelet.service.d/
 
 systemctl daemon-reload
 systemctl enable kubelet
-# ВАЖНО: Не запускаем kubelet вручную! kubeadm init сделает это сам.
 
-echo "[7/7] Pulling Kubernetes images"
-# Так как у вас нет kubernetes-v1.28.tar, качаем образы из интернета напрямую через kubeadm
+echo "=== Предварительная загрузка образов системных контейнеров ==="
 kubeadm config images pull --kubernetes-version=v1.28.0
 
-echo
-echo "================================="
-echo "Установка успешно завершена!"
-echo "================================="
-echo
-echo "Для запуска кластера выполните команду вручную:"
-echo "sudo kubeadm init --kubernetes-version=v1.28.0 --pod-network-cidr=10.244.0.0/16"
-echo
+echo "ПОДГОТОВКА УЗЛА ЗАВЕРШЕНА УСПЕШНО!"
+EOF
+chmod +x ~/k8s-lab/install-k8s.sh
+
 ```
 
-```sh
-cd ~/k8s-lab/
-sudo bash ~/k8s-lab/install-k8s.sh
-mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
+> **Важно:** Скопируйте всю директорию `~/k8s-lab` на остальные 4 ноды кластера (используя `scp` или аналогичный инструмент) и запустите скрипт на **каждом** узле:
+
+```bash
+sudo cd ~/k8s-lab/ && sudo ./install-k8s.sh
+
 ```
 
 ---
 
-### Шаг 6: Инициализация Control Plane (Master)
+### Шаг 4: Инициализация Первой Мастер-ноды (Control Plane)
 
 **Выполнить ТОЛЬКО на `k8s-master-01`:**
 
 ```bash
-# Инициализация первого master узла
 sudo kubeadm init \
   --apiserver-advertise-address=192.168.77.181 \
   --control-plane-endpoint=192.168.77.181:6443 \
@@ -317,274 +194,121 @@ sudo kubeadm init \
   --kubernetes-version=v1.28.0 \
   --cri-socket=unix:///run/containerd/containerd.sock
 
-# Параметры:
-# --apiserver-advertise-address    - IP адрес мастера для других узлов
-# --control-plane-endpoint          - VIP для load balancer (если нет LB, то IP первого мастера)
-# --pod-network-cidr               - CIDR для Pods (для Calico)
-# --service-cidr                   - CIDR для Services
-# --cri-socket                     - containerd socket
-
-# Ожидаемый результат:
-# Your Kubernetes control-plane has initialized successfully!
-# kubeadm join 10.0.1.10:6443 --token xxxxx --discovery-token-ca-cert-hash sha256:xxxxx
-
-# СОХРАНИТЬ ВЫВЕДЕННЫЕ КОМАНДЫ! Они нужны для добавления узлов
 ```
 
-**Сохраните две команды:**
-1. Для добавления мастеров
-2. Для добавления воркеров
+> **Внимание:** В конце успешного вывода вы получите две разные строки `kubeadm join`. **Обязательно сохраните их!**
 
 ---
 
-### Шаг 7: Настройка kubectl для текущего пользователя
+### Шаг 5: Настройка прав доступа для kubectl
+
+Чтобы начать управлять кластером, пользователю необходим конфигурационный токен администратора.
 
 **Выполнить на `k8s-master-01`:**
 
 ```bash
-# Для текущего пользователя
 mkdir -p $HOME/.kube
 sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-# Проверка
+# Проверка связи с API
+kubectl get nodes
+# k8s-master-01 должен отобразиться в статусе NotReady (так как еще нет CNI)
+
+```
+
+---
+
+### Шаг 6: Подключение дополнительных Мастер-нод
+
+Для обеспечения высокой доступности (HA) подключим остальные мастера.
+
+**1. Получение ключа сертификатов на `k8s-master-01`:**
+
+```bash
+sudo kubeadm init phase upload-certs --upload-certs
+# Команда выведет длинный sha256-ключ (Certificate Key). Скопируйте его.
+
+```
+
+**2. Генерация команды подключения для мастеров на `k8s-master-01`:**
+
+```bash
+kubeadm token create --print-join-command --certificate-key <ВАШ_CERTIFICATE_KEY>
+
+```
+
+**3. Выполнение команды на `k8s-master-02` и `k8s-master-03`:**
+Выполните сгенерированную команду на резервных мастерах, обязательно добавив в конец флаг `--control-plane`:
+
+```bash
+sudo kubeadm join 192.168.77.181:6443 --token <token> \
+  --discovery-token-ca-cert-hash sha256:<hash> \
+  --control-plane --certificate-key <key>
+
+```
+
+*После успешного подключения скопируйте конфигурацию `.kube/config` с первого мастера на второй и третий аналогично Шагу 5.*
+
+---
+
+### Шаг 7: Подключение Worker-нод
+
+**1. Получение обычной команды подключения на `k8s-master-01`:**
+
+```bash
+kubeadm token create --print-join-command
+
+```
+
+**2. Выполнение на `k8s-worker-01` и `k8s-worker-02`:**
+
+```bash
+sudo kubeadm join 192.168.77.181:6443 --token <token> \
+  --discovery-token-ca-cert-hash sha256:<hash>
+
+```
+
+---
+
+### Шаг 8: Проверка финального состояния кластера
+
+**Выполнить на `k8s-master-01`:**
+
+```bash
+# Контроль всех участников кластера
 kubectl get nodes
 
 # Ожидаемый результат:
 # NAME            STATUS     ROLES           AGE   VERSION
-# k8s-master-01   NotReady   control-plane   2m    v1.28.0
-# NotReady потому что нет CNI плагина
+# k8s-master-01   NotReady   control-plane   10m   v1.28.0
+# k8s-master-02   NotReady   control-plane   5m    v1.28.0
+# k8s-master-03   NotReady   control-plane   4m    v1.28.0
+# k8s-worker-01   NotReady   <none>          2m    v1.28.0
+# k8s-worker-02   NotReady   <none>          1m    v1.28.0
 
-# Bash completion (опционально)
-sudo yum install -y bash-completion
-echo 'source <(kubectl completion bash)' >> ~/.bashrc
-source ~/.bashrc
-```
-
----
-
-### Шаг 8: Добавление других Master узлов
-
-**Выполнить на `k8s-master-01` для получения токена:**
-
-```bash
-# Создание сертификатов для новых мастеров
-sudo kubeadm init phase upload-certs --upload-certs
-
-# Вывод:
-# W0614 10:30:00.123456 1234 validation.go:28] Cannot validate kube-apiserver certificate
-# Etcd certificates already exist. Skipping etcd certificate generation
-# [upload-certs] Storing the certificates in Secret "kubeadm-certs" in the "kube-system" Namespace
-# [upload-certs] Using certificate key:
-# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# СОХРАНИТЕ ЭТУ СТРОКУ!
-
-# Получение токена для мастеров
-kubeadm token create --print-join-command --certificate-key xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# Ожидаемый результат:
-# kubeadm join 10.0.1.10:6443 --token xxxxx --discovery-token-ca-cert-hash sha256:xxxxx --control-plane --certificate-key xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# СОХРАНИТЕ ЭТУ КОМАНДУ!
-```
-
-**Выполнить на `k8s-master-02` и `k8s-master-03`:**
-
-```bash
-# Присоединение к кластеру как мастер
-sudo kubeadm join 10.0.1.10:6443 \
-  --token xxxxx \
-  --discovery-token-ca-cert-hash sha256:xxxxx \
-  --control-plane \
-  --certificate-key xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# Ожидаемый результат:
-# This node has joined the cluster as a control-plane node.
-
-# Копирование конфига
-mkdir -p $HOME/.kube
-sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
-
-# Проверка
-kubectl get nodes
-```
-
----
-
-### Шаг 9: Добавление Worker узлов
-
-**Выполнить на `k8s-master-01` для получения токена (если истек):**
-
-```bash
-# Создание нового токена для воркеров
-kubeadm token create --print-join-command
-
-# Ожидаемый результат:
-# kubeadm join 10.0.1.10:6443 --token xxxxx --discovery-token-ca-cert-hash sha256:xxxxx
-
-# СОХРАНИТЕ ЭТУ КОМАНДУ!
-```
-
-**Выполнить на `k8s-worker-01` и `k8s-worker-02`:**
-
-```bash
-# Присоединение к кластеру как worker
-sudo kubeadm join 10.0.1.10:6443 \
-  --token xxxxx \
-  --discovery-token-ca-cert-hash sha256:xxxxx
-
-# Ожидаемый результат:
-# This node has joined the cluster as a worker node.
-```
-
----
-
-### Шаг 10: Проверка состояния кластера
-
-**Выполнить на ЛЮБОМ мастере:**
-
-```bash
-# Проверка узлов
-kubectl get nodes
-
-# Ожидаемый результат:
-# NAME            STATUS     ROLES           AGE     VERSION
-# k8s-master-01   NotReady   control-plane   10m     v1.28.0
-# k8s-master-02   NotReady   control-plane   5m      v1.28.0
-# k8s-master-03   NotReady   control-plane   4m      v1.28.0
-# k8s-worker-01   NotReady   <none>          2m      v1.28.0
-# k8s-worker-02   NotReady   <none>          1m      v1.28.0
-# NotReady потому что нет CNI плагина
-
-# Проверка подов
+# Проверка системных подов во всех пространствах
 kubectl get pods -A
 
-# Ожидаемый результат:
-# NAMESPACE     NAME                            READY   STATUS    RESTARTS   AGE
-# kube-system   coredns-5d78c9869d-xxxxx        0/1     Pending   0          5m
-# kube-system   coredns-5d78c9869d-xxxxx        0/1     Pending   0          5m
-# kube-system   etcd-k8s-master-01              1/1     Running   0          5m
-# kube-system   etcd-k8s-master-02              1/1     Running   0          3m
-# kube-system   etcd-k8s-master-03              1/1     Running   0          2m
-# kube-system   kube-apiserver-k8s-master-01    1/1     Running   0          5m
-# kube-system   kube-apiserver-k8s-master-02    1/1     Running   0          3m
-# kube-system   kube-apiserver-k8s-master-03    1/1     Running   0          2m
-# kube-system   kube-controller-manager-xxx     1/1     Running   1          5m
-# kube-system   kube-proxy-xxxxx                1/1     Running   0          5m
-# kube-system   kube-scheduler-xxxxx            1/1     Running   0          5m
 ```
+
+*Все поды (etcd, api, proxy, scheduler) должны быть в состоянии `Running`, кроме подов `coredns` — они законно останутся в статусе `Pending` до момента установки сетевого плагина в следующей лабораторной работе.*
 
 ---
 
-## ✅ Проверка успешности выполнения
+## 🔍 Диагностика типовых проблем
 
-**Все условия должны быть выполнены:**
-```
-✅ 5 узлов видны в кластере (3 Master + 2 Worker)
-✅ Все мастера имеют статус "control-plane"
-✅ Воркеры имеют пустые ROLES
-✅ Все узлы имеют версию v1.28.0
-✅ CoreDNS поды Pending (в ожидании CNI)
-✅ Все system poды работают кроме CoreDNS
-✅ etcd работает на всех мастерах
-✅ kube-apiserver доступен на всех мастерах
-```
+* **Проблема: Ошибка `kubeadm join` из-за таймаута сети**
+* *Решение:* Убедитесь, что `firewalld` на целевом мастере действительно выключен (`sudo systemctl status firewalld`). Проверьте доступность порта 6443 с воркера: `nc -zvw3 192.168.77.181 6443`.
 
----
 
-## 🔍 Диагностика проблем
+* **Проблема: Служба `kubelet` падает и не перезапускается**
+* *Решение:* Проверьте логи системного репортера: `sudo journalctl -u kubelet -n 50`. Чаще всего падение вызвано невыключенным Swap или конфликтом драйверов cgroup (убедитесь, что в `/etc/containerd/config.toml` параметр `SystemdCgroup` равен `true`).
 
-### Проблема: Узлы не присоединяются
-```bash
-# Проверка ошибок на воркере
-sudo journalctl -u kubelet -n 50
 
-# Проверка сетевого доступа
-ping 10.0.1.10
-telnet 10.0.1.10 6443
-
-# Проверка firewall
-sudo firewall-cmd --list-ports
-
-# Открытие необходимых портов
-sudo firewall-cmd --add-port=6443/tcp --permanent
-sudo firewall-cmd --add-port=2379-2380/tcp --permanent
-sudo firewall-cmd --add-port=10250/tcp --permanent
-sudo firewall-cmd --add-port=10251/tcp --permanent
-sudo firewall-cmd --add-port=10252/tcp --permanent
-sudo firewall-cmd --reload
-```
-
-### Проблема: Control plane не стартует
-```bash
-# Проверка логов apiserver
-sudo journalctl -u kubelet | grep -i error
-
-# Проверка дискового пространства
-df -h /var
-
-# Проверка etcd
-sudo ETCDCTL_API=3 etcdctl \
-  --endpoints=127.0.0.1:2379 \
-  endpoint health
-```
-
-### Проблема: Статус NotReady
-```bash
-# Это нормально без CNI плагина
-# Следующий шаг: Lab 2 (установка Calico)
-
-# Проверка события на узле
-kubectl describe node k8s-master-01
-
-# Проверка логов kubelet
-sudo journalctl -u kubelet -f
-```
-
----
-
-## 📚 Дополнительные команды
-
-```bash
-# Получение информации о кластере
-kubectl cluster-info
-kubectl cluster-info dump
-
-# Проверка конфигурации
-kubectl config view
-
-# Информация об узле
-kubectl describe node k8s-master-01
-
-# Логи компонентов
-kubectl logs -n kube-system pod/coredns-xxxxx
-
-# Проверка API ресурсов
-kubectl api-resources
-
-# Версия сервера
-kubectl version
-
-# Проверка здоровья
-kubectl get componentstatus
-```
-
----
-
-## 🎓 Что мы выучили
-
-✅ Подготовка узлов для Kubernetes  
-✅ Установка kubeadm, kubelet, kubectl  
-✅ Инициализация control plane  
-✅ Добавление мастеров для High Availability  
-✅ Добавление worker узлов  
-✅ Проверка состояния кластера  
-✅ Диагностика проблем  
 
 ---
 
 ## 🚀 Следующие шаги
 
-Переход к **Lab 2**: Развертывание CNI плагина (Calico/Cilium)
+Кластер успешно инициализирован и готов к работе. Переходите к **Lab 2**, чтобы развернуть сетевой плагин Calico и перевести узлы в состояние `Ready`.
