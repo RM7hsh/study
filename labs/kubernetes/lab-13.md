@@ -55,7 +55,7 @@ spec:
     spec:
       containers:
       - name: fluentd
-        image: fluent/fluentd:v1.16-alpine
+        image: fluent/fluentd:v1.16-1
         resources:
           requests:
             memory: "64Mi"
