@@ -35,8 +35,8 @@ Metrics Server собирает метрики утилизации ресурс
 mkdir -p ~/k8s-lab/lab17 && cd ~/k8s-lab/lab17
 
 # 1. Скачиваем официальный манифест Metrics Server
-curl -LO https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-
+#curl -LO https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+curl -LO https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.2/components.yaml
 ```
 
 🚨 **Внимание! Критический bare-metal хак (Мидл-траблшутинг):**
