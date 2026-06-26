@@ -1,4 +1,4 @@
-# 🚀 Курс: Kubernetes & Docker Swarm для Системных Администраторов 4 курса
+# 🚀 Курс: Kubernetes & Docker Swarm
 
 ## 📚 Структура курса
 
